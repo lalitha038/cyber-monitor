@@ -1,0 +1,214 @@
+{% extends 'base.html' %}
+{% block title %}Threat Intelligence - Intelligence Platform{% endblock %}
+{% block content %}
+<div style="margin-bottom:2rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+    <div>
+        <h2 style="margin:0;">🛡️ Threat Intelligence</h2>
+        <p style="color:var(--text-muted);margin:.25rem 0 0;">Automated threat detection across social media platforms</p>
+    </div>
+    <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
+        <a href="{{ url_for('rescan_threats') }}" class="btn-primary" style="text-decoration:none;padding:.65rem 1.2rem;">🔄 Re-scan</a>
+        <a href="{{ url_for('export_threats_csv') }}" style="text-decoration:none;padding:.65rem 1.2rem;background:rgba(16,185,129,.15);color:#6ee7b7;border:1px solid rgba(16,185,129,.3);border-radius:6px;">⬇ CSV</a>
+        <a href="{{ url_for('export_threats_pdf') }}" style="text-decoration:none;padding:.65rem 1.2rem;background:rgba(239,68,68,.12);color:#fca5a5;border:1px solid rgba(239,68,68,.3);border-radius:6px;">⬇ PDF</a>
+        <a href="{{ url_for('export_threats_excel') }}" style="text-decoration:none;padding:.65rem 1.2rem;background:rgba(59,130,246,.12);color:#93c5fd;border:1px solid rgba(59,130,246,.3);border-radius:6px;">⬇ Excel</a>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1rem;margin-bottom:2rem;">
+    {% set cards = [('Total Threats', total_threats, '#ef4444'), ('Cyber Attacks', type_counts.get('Cyber Attack',0), '#10b981'), ('Financial Crimes', type_counts.get('Financial Crime',0), '#f59e0b'), ('Security Threats', type_counts.get('Security Threat',0), '#8b5cf6'), ('Social Media Abuse', type_counts.get('Social Media Abuse',0), '#06b6d4'), ('🔴 High Risk', high_risk_count, '#dc2626')] %}
+    {% for label, val, color in cards %}
+    <div style="background:var(--card-bg);padding:1.1rem;border-radius:10px;border-left:4px solid {{color}};box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <p style="margin:0;font-size:.78rem;color:var(--text-muted);text-transform:uppercase;">{{label}}</p>
+        <p style="margin:.4rem 0 0;font-size:1.9rem;font-weight:700;color:{{color}};">{{val}}</p>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Severity Cards -->
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:2rem;">
+    {% set sev_colors = {'Low':'#10b981','Medium':'#f59e0b','High':'#f97316','Critical':'#ef4444'} %}
+    {% for sev in ['Low','Medium','High','Critical'] %}
+    <div style="background:var(--card-bg);padding:1rem;border-radius:10px;text-align:center;border-top:3px solid {{sev_colors[sev]}};box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <p style="margin:0;font-size:.78rem;color:var(--text-muted);">{{sev}}</p>
+        <p style="margin:.3rem 0 0;font-size:1.8rem;font-weight:700;color:{{sev_colors[sev]}};">{{sev_counts.get(sev,0)}}</p>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Charts Row -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1.5rem;margin-bottom:2rem;">
+    <div style="background:var(--card-bg);padding:1.4rem;border-radius:12px;border:1px solid var(--border-color);box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <h3 style="margin-top:0;">Threat Type Distribution</h3>
+        <div style="position:relative;height:240px;"><canvas id="typeChart"></canvas></div>
+    </div>
+    <div style="background:var(--card-bg);padding:1.4rem;border-radius:12px;border:1px solid var(--border-color);box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <h3 style="margin-top:0;">Platform Distribution</h3>
+        <div style="position:relative;height:240px;"><canvas id="platformChart"></canvas></div>
+    </div>
+    <div style="background:var(--card-bg);padding:1.4rem;border-radius:12px;border:1px solid var(--border-color);box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <h3 style="margin-top:0;">Severity Breakdown</h3>
+        <div style="position:relative;height:240px;"><canvas id="sevChart"></canvas></div>
+    </div>
+</div>
+
+<!-- Timeline Chart -->
+<div style="background:var(--card-bg);padding:1.4rem;border-radius:12px;border:1px solid var(--border-color);margin-bottom:2rem;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+    <h3 style="margin-top:0;">📈 Threat Timeline (Last 7 Days)</h3>
+    <div style="position:relative;height:200px;"><canvas id="timelineChart"></canvas></div>
+</div>
+
+<!-- Geographic Map -->
+<div style="background:var(--card-bg);padding:1.4rem;border-radius:12px;border:1px solid var(--border-color);margin-bottom:2rem;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+    <h3 style="margin-top:0;">🌍 Geographic Threat Map</h3>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <div id="threatMap" style="height:400px;border-radius:8px;"></div>
+</div>
+
+<!-- Advanced Search & Filters -->
+<div style="background:var(--card-bg);padding:1.25rem;border-radius:10px;border:1px solid var(--border-color);margin-bottom:1.5rem;">
+    <form method="GET" action="{{ url_for('threat_intelligence') }}" style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:flex-end;">
+        <div style="flex:2;min-width:200px;">
+            <label style="display:block;margin-bottom:.35rem;font-size:.82rem;color:var(--text-muted);">🔍 Search</label>
+            <input type="text" name="q" value="{{ search_query }}" placeholder="Search keyword or post text..." style="width:100%;padding:.65rem;border:1px solid var(--border-color);border-radius:6px;background:#0b1120;color:var(--text-main);">
+        </div>
+        {% set filter_fields = [('threat_type', 'Threat Type', threat_types, current_threat_type), ('platform', 'Platform', ['Twitter','Facebook','Instagram','Discord'], current_platform), ('severity', 'Severity', ['Low','Medium','High','Critical'], current_severity)] %}
+        {% for name, label, opts, current in filter_fields %}
+        <div style="flex:1;min-width:150px;">
+            <label style="display:block;margin-bottom:.35rem;font-size:.82rem;color:var(--text-muted);">{{label}}</label>
+            <select name="{{name}}" style="width:100%;padding:.65rem;border:1px solid var(--border-color);border-radius:6px;background:#0b1120;color:var(--text-main);">
+                <option value="">All</option>
+                {% for o in opts %}<option value="{{o}}" {% if current==o %}selected{% endif %}>{{o}}</option>{% endfor %}
+            </select>
+        </div>
+        {% endfor %}
+        <div style="flex:1;min-width:130px;">
+            <label style="display:block;margin-bottom:.35rem;font-size:.82rem;color:var(--text-muted);">Date From</label>
+            <input type="date" name="date_from" value="{{ date_from }}" style="width:100%;padding:.65rem;border:1px solid var(--border-color);border-radius:6px;background:#0b1120;color:var(--text-main);">
+        </div>
+        <div style="flex:1;min-width:130px;">
+            <label style="display:block;margin-bottom:.35rem;font-size:.82rem;color:var(--text-muted);">Date To</label>
+            <input type="date" name="date_to" value="{{ date_to }}" style="width:100%;padding:.65rem;border:1px solid var(--border-color);border-radius:6px;background:#0b1120;color:var(--text-main);">
+        </div>
+        <div style="display:flex;gap:.5rem;">
+            <button type="submit" class="btn-primary">Filter</button>
+            <a href="{{ url_for('threat_intelligence') }}" class="btn-outline" style="text-decoration:none;display:inline-block;padding:.65rem 1rem;">Clear</a>
+        </div>
+    </form>
+</div>
+
+<!-- Threats Table -->
+<div style="background:var(--card-bg);border-radius:12px;border:1px solid var(--border-color);overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+    <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;text-align:left;">
+            <thead style="background:rgba(0,0,0,.3);border-bottom:2px solid var(--border-color);">
+                <tr>
+                    {% for h in ['Platform','Username','Post','Threat Type','Severity','Score','Sentiment','Keyword','Date'] %}
+                    <th style="padding:.9rem 1rem;color:var(--text-muted);font-size:.8rem;text-transform:uppercase;white-space:nowrap;">{{h}}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for threat in threats %}
+                {% set sev_bg = {'Low':'rgba(16,185,129,.15)','Medium':'rgba(245,158,11,.15)','High':'rgba(249,115,22,.15)','Critical':'rgba(239,68,68,.15)'} %}
+                {% set sev_color = {'Low':'#6ee7b7','Medium':'#fcd34d','High':'#fdba74','Critical':'#fca5a5'} %}
+                {% set sev_border = {'Low':'rgba(16,185,129,.4)','Medium':'rgba(245,158,11,.4)','High':'rgba(249,115,22,.4)','Critical':'rgba(239,68,68,.5)'} %}
+                <tr style="border-bottom:1px solid var(--border-color);{% if threat.is_high_risk %}background:rgba(220,38,38,.04);{% endif %}">
+                    <td style="padding:.8rem 1rem;font-weight:600;color:{% if threat.platform=='Twitter' %}#10b981{% elif threat.platform=='Facebook' %}#3b82f6{% elif threat.platform=='Instagram' %}#8b5cf6{% else %}#06b6d4{% endif %};">{{threat.platform}}</td>
+                    <td style="padding:.8rem 1rem;color:var(--primary-color);">@{{threat.username}}</td>
+                    <td style="padding:.8rem 1rem;max-width:300px;font-size:.9rem;">
+                        {{threat.post_text[:80]}}{% if threat.post_text|length > 80 %}...{% endif %}
+                        {% if threat.is_high_risk %}<span style="display:inline-block;background:rgba(220,38,38,.2);color:#f87171;padding:.15rem .4rem;border-radius:9999px;font-size:.68rem;font-weight:700;margin-left:.3rem;border:1px solid #ef4444;animation:blink 1.5s ease-in-out infinite;">🔴 HIGH RISK</span>{% endif %}
+                    </td>
+                    <td style="padding:.8rem 1rem;">
+                        {% set type_colors = {'Cyber Attack':'#6ee7b7','Financial Crime':'#fcd34d','Security Threat':'#c4b5fd','Social Media Abuse':'#67e8f9'} %}
+                        {% set type_bg = {'Cyber Attack':'rgba(16,185,129,.15)','Financial Crime':'rgba(245,158,11,.15)','Security Threat':'rgba(139,92,246,.15)','Social Media Abuse':'rgba(6,182,212,.15)'} %}
+                        <span style="background:{{type_bg.get(threat.threat_type,'rgba(100,100,100,.1)')}};color:{{type_colors.get(threat.threat_type,'#ccc')}};padding:.25rem .55rem;border-radius:4px;font-size:.78rem;">{{threat.threat_type}}</span>
+                    </td>
+                    <td style="padding:.8rem 1rem;">
+                        <span style="background:{{sev_bg.get(threat.severity,'rgba(100,100,100,.1)')}};color:{{sev_color.get(threat.severity,'#ccc')}};padding:.25rem .55rem;border-radius:4px;font-size:.78rem;border:1px solid {{sev_border.get(threat.severity,'rgba(100,100,100,.2)')}};font-weight:600;">{{threat.severity}}</span>
+                    </td>
+                    <td style="padding:.8rem 1rem;text-align:center;">
+                        <span style="font-size:1rem;font-weight:700;color:{% if threat.threat_score >= 8 %}#f87171{% elif threat.threat_score >= 5 %}#fcd34d{% else %}#6ee7b7{% endif %};">{{threat.threat_score}}/10</span>
+                    </td>
+                    <td style="padding:.8rem 1rem;font-size:.82rem;">
+                        {% if threat.sentiment == 'Negative' %}<span style="color:#f87171;">▼ {{threat.sentiment}}</span>
+                        {% elif threat.sentiment == 'Positive' %}<span style="color:#6ee7b7;">▲ {{threat.sentiment}}</span>
+                        {% else %}<span style="color:#94a3b8;">— {{threat.sentiment}}</span>{% endif %}
+                    </td>
+                    <td style="padding:.8rem 1rem;font-size:.82rem;color:var(--text-muted);">{{threat.matched_keyword}}</td>
+                    <td style="padding:.8rem 1rem;font-size:.8rem;color:var(--text-muted);white-space:nowrap;">{{threat.timestamp[:10]}}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="9" style="padding:2rem;text-align:center;color:var(--text-muted);">No threats found matching filters. <a href="{{ url_for('rescan_threats') }}" style="color:var(--primary-color);">Run a scan</a>.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.borderColor = '#1e293b';
+
+// Threat Type Doughnut
+new Chart(document.getElementById('typeChart'), {
+    type: 'doughnut',
+    data: {
+        labels: {{ type_counts.keys()|list|tojson }},
+        datasets: [{ data: {{ type_counts.values()|list|tojson }}, backgroundColor: ['#10b981','#f59e0b','#8b5cf6','#06b6d4'], borderColor: '#111827', borderWidth: 2 }]
+    },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'right' } }, cutout:'65%' }
+});
+
+// Platform Bar
+new Chart(document.getElementById('platformChart'), {
+    type: 'bar',
+    data: {
+        labels: {{ platform_labels|tojson }},
+        datasets: [{ label:'Threats', data:{{ platform_counts|tojson }}, backgroundColor:['#10b981','#3b82f6','#8b5cf6','#06b6d4'], borderRadius:4 }]
+    },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, grid:{ color:'#1e293b' } }, x:{ grid:{ display:false } } } }
+});
+
+// Severity Doughnut
+new Chart(document.getElementById('sevChart'), {
+    type: 'doughnut',
+    data: {
+        labels: ['Low','Medium','High','Critical'],
+        datasets: [{ data: [{{ sev_counts.get('Low',0) }},{{ sev_counts.get('Medium',0) }},{{ sev_counts.get('High',0) }},{{ sev_counts.get('Critical',0) }}],
+            backgroundColor: ['#10b981','#f59e0b','#f97316','#ef4444'], borderColor:'#111827', borderWidth:2 }]
+    },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'right' } }, cutout:'60%' }
+});
+
+// Timeline Line Chart
+new Chart(document.getElementById('timelineChart'), {
+    type: 'line',
+    data: {
+        labels: {{ timeline_labels|tojson }},
+        datasets: [{ label:'Threats Detected', data:{{ timeline_values|tojson }},
+            borderColor:'#10b981', backgroundColor:'rgba(16,185,129,.1)',
+            tension:.4, fill:true, pointBackgroundColor:'#10b981', pointRadius:5 }]
+    },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } },
+        scales:{ y:{ beginAtZero:true, grid:{ color:'#1e293b' } }, x:{ grid:{ display:false } } } }
+});
+
+// Leaflet Map
+const map = L.map('threatMap').setView([20, 0], 2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+
+const mapPoints = {{ map_points|tojson }};
+const markerColors = { 'Cyber Attack':'#10b981','Financial Crime':'#f59e0b','Security Threat':'#ef4444','Social Media Abuse':'#06b6d4' };
+
+mapPoints.forEach(p => {
+    const color = markerColors[p.type] || '#888';
+    const icon = L.divIcon({ html: `<div style="width:12px;height:12px;background:${color};border-radius:50%;border:2px solid white;box-shadow:0 0 6px ${color};"></div>`, className:'', iconSize:[12,12] });
+    L.marker([p.lat, p.lng], { icon })
+     .addTo(map)
+     .bindPopup(`<b style="color:${color}">${p.type}</b><br><b>📍 ${p.name}</b><br><small>${p.post}</small>`);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,106 @@
+{% extends 'base.html' %}
+{% block title %}Admin Panel - Intelligence Platform{% endblock %}
+{% block content %}
+<div style="margin-bottom:2rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+    <div>
+        <h2 style="margin:0;">🔧 Admin Panel</h2>
+        <p style="color:var(--text-muted);margin:.25rem 0 0;">Manage users, roles, and platform-wide activity</p>
+    </div>
+    <span style="background:rgba(239,68,68,.15);color:#fca5a5;padding:.35rem .8rem;border-radius:6px;border:1px solid rgba(239,68,68,.3);font-size:.85rem;font-weight:600;">🔴 Admin Access</span>
+</div>
+
+<!-- Platform-wide Stats -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1rem;margin-bottom:2rem;">
+    {% for label, val, color in [('Total Users', total_users, '#10b981'), ('Total Posts', total_posts, '#3b82f6'), ('Total Threats', total_threats, '#ef4444'), ('Activity Events', total_logs, '#8b5cf6')] %}
+    <div style="background:var(--card-bg);padding:1.1rem;border-radius:10px;border-left:4px solid {{color}};box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <p style="margin:0;font-size:.78rem;color:var(--text-muted);text-transform:uppercase;">{{label}}</p>
+        <p style="margin:.4rem 0 0;font-size:1.9rem;font-weight:700;color:{{color}};">{{val}}</p>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- User Management Table -->
+<div style="background:var(--card-bg);border-radius:12px;border:1px solid var(--border-color);overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.3);margin-bottom:2rem;">
+    <div style="padding:1.1rem 1.3rem;border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
+        <h3 style="margin:0;">👥 All Users</h3>
+    </div>
+    <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;">
+            <thead style="background:rgba(0,0,0,.3);border-bottom:2px solid var(--border-color);">
+                <tr>
+                    {% for h in ['#','Name','Username','Role','Posts','Threats','Last Login','Change Role','Action'] %}
+                    <th style="padding:.85rem 1rem;color:var(--text-muted);font-size:.78rem;text-transform:uppercase;text-align:left;white-space:nowrap;">{{h}}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in user_stats %}
+                {% set role_colors = {'Admin':'#ef4444','Analyst':'#10b981','Viewer':'#94a3b8'} %}
+                <tr style="border-bottom:1px solid var(--border-color);">
+                    <td style="padding:.8rem 1rem;color:var(--text-muted);font-size:.85rem;">{{loop.index}}</td>
+                    <td style="padding:.8rem 1rem;font-weight:500;">{{u.name}}</td>
+                    <td style="padding:.8rem 1rem;color:var(--primary-color);">@{{u.username}}</td>
+                    <td style="padding:.8rem 1rem;">
+                        <span style="background:rgba(0,0,0,.2);color:{{role_colors.get(u.role,'#94a3b8')}};padding:.2rem .55rem;border-radius:4px;font-size:.78rem;font-weight:600;border:1px solid {{role_colors.get(u.role,'#94a3b8')}}44;">{{u.role}}</span>
+                    </td>
+                    <td style="padding:.8rem 1rem;font-size:.9rem;">{{u.posts}}</td>
+                    <td style="padding:.8rem 1rem;font-size:.9rem;color:#fca5a5;">{{u.threats}}</td>
+                    <td style="padding:.8rem 1rem;font-size:.8rem;color:var(--text-muted);white-space:nowrap;">{{u.last_login}}</td>
+                    <td style="padding:.8rem 1rem;">
+                        <form method="POST" action="{{ url_for('change_role', uid=u.id) }}" style="display:flex;gap:.4rem;align-items:center;">
+                            <select name="role" style="padding:.35rem .6rem;border:1px solid var(--border-color);border-radius:5px;background:#0b1120;color:var(--text-main);font-size:.82rem;">
+                                {% for r in ['Admin','Analyst','Viewer'] %}
+                                <option value="{{r}}" {% if u.role==r %}selected{% endif %}>{{r}}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" style="padding:.35rem .7rem;background:rgba(16,185,129,.15);color:#6ee7b7;border:1px solid rgba(16,185,129,.3);border-radius:5px;cursor:pointer;font-size:.8rem;">Save</button>
+                        </form>
+                    </td>
+                    <td style="padding:.8rem 1rem;">
+                        {% if u.id != session.get('user_id') %}
+                        <form method="POST" action="{{ url_for('delete_user', uid=u.id) }}" onsubmit="return confirm('Delete user {{u.username}} and all their data?')">
+                            <button type="submit" style="padding:.35rem .7rem;background:rgba(239,68,68,.1);color:#f87171;border:1px solid rgba(239,68,68,.3);border-radius:5px;cursor:pointer;font-size:.8rem;">✕ Delete</button>
+                        </form>
+                        {% else %}
+                        <span style="font-size:.78rem;color:var(--text-muted);">You</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Recent Global Activity -->
+<div style="background:var(--card-bg);border-radius:12px;border:1px solid var(--border-color);overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+    <div style="padding:1.1rem 1.3rem;border-bottom:1px solid var(--border-color);">
+        <h3 style="margin:0;">🗂️ Recent Platform Activity (All Users)</h3>
+    </div>
+    <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;">
+            <thead style="background:rgba(0,0,0,.3);border-bottom:1px solid var(--border-color);">
+                <tr>
+                    {% for h in ['Time','Username','Action','Details','IP'] %}
+                    <th style="padding:.8rem 1rem;color:var(--text-muted);font-size:.78rem;text-transform:uppercase;text-align:left;">{{h}}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% set action_colors = {'LOGIN':'#10b981','LOGOUT':'#6b7280','FAILED_LOGIN':'#ef4444','THREAT_SCAN':'#8b5cf6','CLEAR_DATA':'#f97316','ROLE_CHANGE':'#f59e0b','DELETE_USER':'#ef4444','SIGNUP':'#06b6d4'} %}
+                {% for log in recent_logs %}
+                <tr style="border-bottom:1px solid var(--border-color);{% if log.action=='FAILED_LOGIN' %}background:rgba(239,68,68,.04);{% endif %}">
+                    <td style="padding:.7rem 1rem;font-size:.8rem;color:var(--text-muted);white-space:nowrap;">{{log.timestamp}}</td>
+                    <td style="padding:.7rem 1rem;color:var(--primary-color);font-size:.88rem;">{{log.username}}</td>
+                    <td style="padding:.7rem 1rem;">
+                        <span style="background:rgba(0,0,0,.2);color:{{action_colors.get(log.action,'#94a3b8')}};padding:.2rem .5rem;border-radius:4px;font-size:.75rem;font-weight:600;border:1px solid {{action_colors.get(log.action,'#94a3b8')}}33;">{{log.action}}</span>
+                    </td>
+                    <td style="padding:.7rem 1rem;font-size:.82rem;color:var(--text-muted);">{{log.details}}</td>
+                    <td style="padding:.7rem 1rem;font-size:.8rem;color:var(--text-muted);font-family:'Share Tech Mono',monospace;">{{log.ip_address or '—'}}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
