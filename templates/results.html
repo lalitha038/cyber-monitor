@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+
+{% block title %}Results - Intelligence Platform{% endblock %}
+
+{% block content %}
+<div class="results-header" style="margin-bottom: 2rem;">
+    <h2>Intelligence Results</h2>
+    <p class="text-muted">Analyzed social media posts based on your watch words.</p>
+</div>
+
+<div class="card" style="margin-bottom: 2rem; padding: 1.5rem; background: var(--card-bg); border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+    <form method="GET" action="{{ url_for('results') }}" class="filter-form" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 1; min-width: 200px; margin-bottom: 0;">
+            <label for="platform">Platform</label>
+            <select id="platform" name="platform" class="form-control" style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 6px;">
+                <option value="">All Platforms</option>
+                {% for p in platforms %}
+                <option value="{{ p }}" {% if current_platform == p %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 200px; margin-bottom: 0;">
+            <label for="keyword">Keyword</label>
+            <select id="keyword" name="keyword" class="form-control" style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 6px;">
+                <option value="">All Keywords</option>
+                {% for k in keywords %}
+                <option value="{{ k }}" {% if current_keyword == k %}selected{% endif %}>{{ k }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 200px; margin-bottom: 0;">
+            <label for="category">Category</label>
+            <select id="category" name="category" class="form-control" style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 6px;">
+                <option value="">All Categories</option>
+                {% for c in categories %}
+                <option value="{{ c }}" {% if current_category == c %}selected{% endif %}>{{ c }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="flex: 0 0 auto;">
+            <button type="submit" class="btn-primary" style="height: 100%;">Apply Filters</button>
+            <a href="{{ url_for('results') }}" class="btn-outline" style="text-decoration: none; display: inline-block; margin-left: 0.5rem; padding: 0.75rem 1rem;">Clear</a>
+        </div>
+    </form>
+</div>
+
+<div class="card" style="background: var(--card-bg); border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid var(--border-color); overflow: hidden;">
+    <div style="overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead style="background-color: rgba(0,0,0,0.2); border-bottom: 2px solid var(--border-color);">
+                <tr>
+                    <th style="padding: 1rem; font-weight: 600; color: var(--text-muted);">Platform</th>
+                    <th style="padding: 1rem; font-weight: 600; color: var(--text-muted);">Username</th>
+                    <th style="padding: 1rem; font-weight: 600; color: var(--text-muted);">Post</th>
+                    <th style="padding: 1rem; font-weight: 600; color: var(--text-muted);">Category</th>
+                    <th style="padding: 1rem; font-weight: 600; color: var(--text-muted);">Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for post in posts %}
+                <tr style="border-bottom: 1px solid var(--border-color);">
+                    <td style="padding: 1rem;">
+                        {% if post.platform == 'Twitter' %}
+                            <span style="color: #10b981; font-weight: 600;">{{ post.platform }}</span>
+                        {% elif post.platform == 'Facebook' %}
+                            <span style="color: #3b82f6; font-weight: 600;">{{ post.platform }}</span>
+                        {% elif post.platform == 'Instagram' %}
+                            <span style="color: #8b5cf6; font-weight: 600;">{{ post.platform }}</span>
+                        {% else %}
+                            <span style="color: #06b6d4; font-weight: 600;">{{ post.platform }}</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding: 1rem; font-weight: 500; color: var(--primary-color);">@{{ post.username }}</td>
+                    <td style="padding: 1rem; color: var(--text-main);">
+                        {{ post.post_text }}
+                        {% if post.is_high_risk %}
+                            <span style="display: inline-block; background-color: rgba(220, 38, 38, 0.2); color: #f87171; padding: 0.25rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; margin-left: 0.5rem; border: 1px solid #ef4444;">High Risk</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding: 1rem;">
+                        {% if post.category == 'Cyber Threat' %}
+                            <span style="display: inline-block; background-color: rgba(239, 68, 68, 0.2); color: #fca5a5; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.85rem; font-weight: 500; border: 1px solid rgba(239, 68, 68, 0.3);">{{ post.category }}</span>
+                        {% elif post.category == 'Security Alert' %}
+                            <span style="display: inline-block; background-color: rgba(245, 158, 11, 0.2); color: #fcd34d; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.85rem; font-weight: 500; border: 1px solid rgba(245, 158, 11, 0.3);">{{ post.category }}</span>
+                        {% else %}
+                            <span style="display: inline-block; background-color: rgba(148, 163, 184, 0.2); color: #cbd5e1; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.85rem; font-weight: 500; border: 1px solid rgba(148, 163, 184, 0.3);">{{ post.category }}</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding: 1rem; color: var(--text-muted); font-size: 0.9rem;">{{ post.timestamp }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" style="padding: 2rem; text-align: center; color: var(--text-muted);">No posts found. Start by adding watch words.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
