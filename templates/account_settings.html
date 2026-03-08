@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block title %}Account Settings - Intelligence Platform{% endblock %}
+{% block content %}
+<div style="max-width:600px;margin:0 auto;">
+    <h2>⚙️ Account Settings</h2>
+
+    <div style="background:var(--card-bg);border-radius:12px;border:1px solid var(--border-color);padding:1.5rem;margin-bottom:1.5rem;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <h3 style="margin-top:0;">👤 Current Account Info</h3>
+        <p><strong>Username:</strong> {{ user['username'] }}</p>
+        <p><strong>Name:</strong> {{ user['name'] }}</p>
+        <p><strong>Role:</strong> <span style="background:rgba(16,185,129,.15);color:#6ee7b7;padding:.2rem .5rem;border-radius:4px;">{{ user['role'] }}</span></p>
+    </div>
+
+    <div style="background:var(--card-bg);border-radius:12px;border:1px solid var(--border-color);padding:1.5rem;margin-bottom:1.5rem;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <h3 style="margin-top:0;">🔄 Change Username</h3>
+        <form method="POST">
+            <input type="hidden" name="action" value="change_username">
+            <div style="margin-bottom:1rem;">
+                <label style="display:block;margin-bottom:.4rem;font-size:.85rem;color:var(--text-muted);">New Username</label>
+                <input type="text" name="new_username" required style="width:100%;padding:.75rem;border:1px solid var(--border-color);border-radius:6px;background:#0b1120;color:var(--text-main);box-sizing:border-box;">
+            </div>
+            <button type="submit" class="btn-primary">Update Username</button>
+        </form>
+    </div>
+
+    <div style="background:var(--card-bg);border-radius:12px;border:1px solid var(--border-color);padding:1.5rem;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <h3 style="margin-top:0;">🔒 Change Password</h3>
+        <form method="POST">
+            <input type="hidden" name="action" value="change_password">
+            <div style="margin-bottom:1rem;">
+                <label style="display:block;margin-bottom:.4rem;font-size:.85rem;color:var(--text-muted);">Current Password</label>
+                <input type="password" name="current_password" required style="width:100%;padding:.75rem;border:1px solid var(--border-color);border-radius:6px;background:#0b1120;color:var(--text-main);box-sizing:border-box;">
+            </div>
+            <div style="margin-bottom:1rem;">
+                <label style="display:block;margin-bottom:.4rem;font-size:.85rem;color:var(--text-muted);">New Password</label>
+                <input type="password" name="new_password" required style="width:100%;padding:.75rem;border:1px solid var(--border-color);border-radius:6px;background:#0b1120;color:var(--text-main);box-sizing:border-box;">
+            </div>
+            <button type="submit" class="btn-primary">Update Password</button>
+        </form>
+    </div>
+
+    <div style="margin-top:1.5rem;padding:1rem;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:10px;">
+        <h4 style="margin:0 0 .5rem;color:#fca5a5;">⚠️ Danger Zone</h4>
+        <p style="color:var(--text-muted);font-size:.85rem;margin-bottom:1rem;">This will permanently delete all your collected posts and threat data.</p>
+        <a href="{{ url_for('clear_data') }}" onclick="return confirm('Are you sure? This deletes ALL your data permanently.')" style="text-decoration:none;padding:.6rem 1.2rem;background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.3);border-radius:6px;font-size:.85rem;">🗑 Clear All Data</a>
+    </div>
+</div>
+{% endblock %}
