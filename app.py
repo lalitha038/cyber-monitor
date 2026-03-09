@@ -28,6 +28,18 @@ try:
 except ImportError:
     OPENPYXL_AVAILABLE = False
 
+try:
+    import praw
+    PRAW_AVAILABLE = True
+except ImportError:
+    PRAW_AVAILABLE = False
+
+try:
+    import requests as http_requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+
 app = Flask(__name__)
 app.secret_key = 'super_secret_social_media_key_2026'
 
@@ -438,7 +450,114 @@ def dashboard():
         sev_counts=sev_counts, total_threats=total_threats,
         alert_count=alert_count)
 
-# ─── WATCH WORDS ───────────────────────────────────────────────────────────────
+# ─── REAL CRAWLERS ─────────────────────────────────────────────────────────────
+
+def real_crawler_reddit(user_id, keywords_list):
+    """Fetch real posts from Reddit using PRAW. Requires REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET env vars."""
+    if not PRAW_AVAILABLE:
+        return False
+    client_id = os.environ.get('REDDIT_CLIENT_ID', '')
+    client_secret = os.environ.get('REDDIT_CLIENT_SECRET', '')
+    if not client_id or not client_secret:
+        return False
+    try:
+        reddit = praw.Reddit(
+            client_id=client_id,
+            client_secret=client_secret,
+            user_agent='CyberIntelPlatform/1.0 (by /u/intel_monitor)'
+        )
+        db = get_db()
+        cyber_threat_words = ['ransomware','malware','hack','ddos','phishing','zero-day',
+                              'botnet','exploit','breach','vulnerability','apt','spyware']
+        security_alert_words = ['protest','attack','data leak','threat','warning','alert']
+        high_risk_words = ['attack','bomb','breach','hack','zero-day','apt','ransomware','terrorism']
+        count = 0
+        for kw in keywords_list:
+            try:
+                results = reddit.subreddit('all').search(kw, limit=20, time_filter='week', sort='new')
+                for post in results:
+                    post_text = (post.title + ' ' + (post.selftext or ''))[:500].strip()
+                    if not post_text:
+                        continue
+                    post_lower = post_text.lower()
+                    category = 'General Discussion'
+                    if any(w in post_lower for w in cyber_threat_words): category = 'Cyber Threat'
+                    elif any(w in post_lower for w in security_alert_words): category = 'Security Alert'
+                    is_high_risk = any(w in post_lower for w in high_risk_words)
+                    score = get_threat_score('High' if is_high_risk else 'Low')
+                    sentiment = classify_sentiment(post_text)
+                    author = str(post.author) if post.author else 'deleted'
+                    ts = datetime.fromtimestamp(post.created_utc).strftime('%Y-%m-%d %H:%M:%S')
+                    platform = f"Reddit r/{post.subreddit.display_name}"
+                    db_execute(db, '''INSERT INTO posts (user_id, platform, username, post_text, timestamp, keyword, category, is_high_risk, threat_score, sentiment)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                        (user_id, platform, author, post_text, ts, kw, category, is_high_risk, score, sentiment))
+                    count += 1
+            except Exception:
+                continue
+        db.close()
+        return count > 0
+    except Exception:
+        return False
+
+
+def real_crawler_hackernews(user_id, keywords_list):
+    """Fetch real posts from HackerNews via Algolia API — zero setup, no API key needed."""
+    if not REQUESTS_AVAILABLE:
+        return False
+    try:
+        db = get_db()
+        cyber_threat_words = ['ransomware','malware','hack','ddos','phishing','zero-day',
+                              'breach','exploit','vulnerability','security']
+        high_risk_words = ['attack','breach','hack','ransomware','zero-day','exploit']
+        count = 0
+        for kw in keywords_list:
+            try:
+                url = f'https://hn.algolia.com/api/v1/search?query={kw}&tags=story&hitsPerPage=20'
+                resp = http_requests.get(url, timeout=8)
+                if resp.status_code != 200:
+                    continue
+                hits = resp.json().get('hits', [])
+                for hit in hits:
+                    title = hit.get('title', '')
+                    body = hit.get('story_text') or ''
+                    post_text = (title + ' ' + body)[:500].strip()
+                    if not post_text:
+                        continue
+                    post_lower = post_text.lower()
+                    category = 'Cyber Threat' if any(w in post_lower for w in cyber_threat_words) else 'General Discussion'
+                    is_high_risk = any(w in post_lower for w in high_risk_words)
+                    score = get_threat_score('High' if is_high_risk else 'Low')
+                    sentiment = classify_sentiment(post_text)
+                    author = hit.get('author', 'hn_user')
+                    created_at = hit.get('created_at', datetime.now().isoformat())
+                    try:
+                        ts = datetime.fromisoformat(created_at.replace('Z','')).strftime('%Y-%m-%d %H:%M:%S')
+                    except Exception:
+                        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    db_execute(db, '''INSERT INTO posts (user_id, platform, username, post_text, timestamp, keyword, category, is_high_risk, threat_score, sentiment)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                        (user_id, 'HackerNews', author, post_text, ts, kw, category, is_high_risk, score, sentiment))
+                    count += 1
+            except Exception:
+                continue
+        db.close()
+        return count > 0
+    except Exception:
+        return False
+
+
+def smart_crawler(user_id, keywords_list):
+    """Try Reddit first, then HackerNews, then fall back to simulation."""
+    if real_crawler_reddit(user_id, keywords_list):
+        return 'reddit'
+    if real_crawler_hackernews(user_id, keywords_list):
+        return 'hackernews'
+    simulate_crawler(user_id, keywords_list)
+    return 'simulated'
+
+
+# ─── WATCH WORDS (SIMULATED FALLBACK) ──────────────────────────────────────────
 
 def simulate_crawler(user_id, keywords_list):
     platforms = ['Twitter', 'Facebook', 'Instagram', 'Discord']
@@ -494,8 +613,9 @@ def watchwords():
             for kw in keywords_list:
                 db_execute(db, 'INSERT INTO watchwords (user_id, keyword) VALUES (%s, %s)', (uid, kw))
             db.close()
-            simulate_crawler(uid, keywords_list)
-            flash(f'Monitoring started for {len(keywords_list)} keywords!', 'success')
+            source = smart_crawler(uid, keywords_list)
+            source_labels = {'reddit': 'Reddit', 'hackernews': 'HackerNews', 'simulated': 'Simulated Data'}
+            flash(f'Monitoring started! Fetched real posts from {source_labels.get(source, source)} for {len(keywords_list)} keyword(s).', 'success')
             return redirect(url_for('results'))
         flash('Please enter at least one keyword.', 'error')
     return render_template('watchwords.html')
