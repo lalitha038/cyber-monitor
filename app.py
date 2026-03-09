@@ -1,4 +1,5 @@
-import sqlite3
+import psycopg2
+import psycopg2.extras
 import os
 import csv
 import io
@@ -59,38 +60,53 @@ def require_role(min_role):
         return decorated
     return decorator
 
-# In Vercel serverless, the only writable directory is /tmp
-if os.environ.get('VERCEL'):
-    DATABASE = '/tmp/database.db'
-else:
-    DATABASE = os.path.join(os.path.dirname(__file__), 'database.db')
+# PostgreSQL connection via DATABASE_URL environment variable
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
 # ─── DATABASE ──────────────────────────────────────────────────────────────────
 
 def get_db():
-    conn = sqlite3.connect(DATABASE)
-    conn.row_factory = sqlite3.Row
+    """Open a new PostgreSQL connection using DATABASE_URL."""
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
     return conn
 
+def db_fetchone(conn, query, params=()):
+    """Execute a query and return one row as a dict (or None)."""
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+        return cur.fetchone()
+
+def db_fetchall(conn, query, params=()):
+    """Execute a query and return all rows as a list of dicts."""
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+        return cur.fetchall()
+
+def db_execute(conn, query, params=()):
+    """Execute a write query (INSERT/UPDATE/DELETE) and commit."""
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+    conn.commit()
+
 def init_db():
-    with sqlite3.connect(DATABASE) as conn:
-        c = conn.cursor()
+    conn = get_db()
+    with conn.cursor() as c:
         c.execute('''CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             role TEXT DEFAULT 'Analyst'
         )''')
         c.execute('''CREATE TABLE IF NOT EXISTS watchwords (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
             keyword TEXT NOT NULL,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id)
         )''')
         c.execute('''CREATE TABLE IF NOT EXISTS posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
             platform TEXT NOT NULL,
             username TEXT NOT NULL,
@@ -98,13 +114,13 @@ def init_db():
             timestamp TEXT NOT NULL,
             keyword TEXT NOT NULL,
             category TEXT NOT NULL,
-            is_high_risk BOOLEAN DEFAULT 0,
+            is_high_risk BOOLEAN DEFAULT FALSE,
             threat_score INTEGER DEFAULT 0,
             sentiment TEXT DEFAULT 'Neutral',
             FOREIGN KEY (user_id) REFERENCES users (id)
         )''')
         c.execute('''CREATE TABLE IF NOT EXISTS threats (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
             platform TEXT NOT NULL,
             username TEXT NOT NULL,
@@ -116,13 +132,13 @@ def init_db():
             threat_score INTEGER DEFAULT 0,
             location TEXT DEFAULT 'Unknown',
             sentiment TEXT DEFAULT 'Neutral',
-            is_high_risk BOOLEAN DEFAULT 0,
-            is_reviewed BOOLEAN DEFAULT 0,
+            is_high_risk BOOLEAN DEFAULT FALSE,
+            is_reviewed BOOLEAN DEFAULT FALSE,
             entities TEXT DEFAULT '',
             FOREIGN KEY (user_id) REFERENCES users (id)
         )''')
         c.execute('''CREATE TABLE IF NOT EXISTS user_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
             username TEXT NOT NULL,
             action TEXT NOT NULL,
@@ -131,24 +147,25 @@ def init_db():
             timestamp TEXT NOT NULL
         )''')
         conn.commit()
-        
-        # Migrate existing tables - add new columns if they don't exist yet
+
+        # Safe column migrations (PostgreSQL ignores duplicate column errors)
         for migration in [
-            "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'Analyst'",
-            "ALTER TABLE posts ADD COLUMN threat_score INTEGER DEFAULT 0",
-            "ALTER TABLE posts ADD COLUMN sentiment TEXT DEFAULT 'Neutral'",
-            "ALTER TABLE threats ADD COLUMN severity TEXT DEFAULT 'Low'",
-            "ALTER TABLE threats ADD COLUMN threat_score INTEGER DEFAULT 0",
-            "ALTER TABLE threats ADD COLUMN location TEXT DEFAULT 'Unknown'",
-            "ALTER TABLE threats ADD COLUMN sentiment TEXT DEFAULT 'Neutral'",
-            "ALTER TABLE threats ADD COLUMN is_reviewed BOOLEAN DEFAULT 0",
-            "ALTER TABLE threats ADD COLUMN entities TEXT DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'Analyst'",
+            "ALTER TABLE posts ADD COLUMN IF NOT EXISTS threat_score INTEGER DEFAULT 0",
+            "ALTER TABLE posts ADD COLUMN IF NOT EXISTS sentiment TEXT DEFAULT 'Neutral'",
+            "ALTER TABLE threats ADD COLUMN IF NOT EXISTS severity TEXT DEFAULT 'Low'",
+            "ALTER TABLE threats ADD COLUMN IF NOT EXISTS threat_score INTEGER DEFAULT 0",
+            "ALTER TABLE threats ADD COLUMN IF NOT EXISTS location TEXT DEFAULT 'Unknown'",
+            "ALTER TABLE threats ADD COLUMN IF NOT EXISTS sentiment TEXT DEFAULT 'Neutral'",
+            "ALTER TABLE threats ADD COLUMN IF NOT EXISTS is_reviewed BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE threats ADD COLUMN IF NOT EXISTS entities TEXT DEFAULT ''",
         ]:
             try:
                 c.execute(migration)
             except Exception:
                 pass
         conn.commit()
+    conn.close()
 
 @app.before_request
 def before_request():
@@ -159,9 +176,9 @@ def log_action(user_id, username, action, details=''):
     try:
         db = get_db()
         ip = request.remote_addr or ''
-        db.execute('INSERT INTO user_logs (user_id, username, action, details, ip_address, timestamp) VALUES (?,?,?,?,?,?)',
+        db_execute(db, 'INSERT INTO user_logs (user_id, username, action, details, ip_address, timestamp) VALUES (%s,%s,%s,%s,%s,%s)',
                    (user_id, username, action, details, ip, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        db.commit()
+        db.close()
     except Exception:
         pass
 
@@ -294,17 +311,17 @@ def simulate_threat_scan(user_id):
                 lat = location_entry[1] + random.uniform(-2, 2)
                 lng = location_entry[2] + random.uniform(-2, 2)
                 location_json = json.dumps({'name': location_entry[0], 'lat': round(lat, 4), 'lng': round(lng, 4)})
-                is_high_risk = 1 if severity == 'Critical' or any(w in post_text.lower() or w in kw.lower() for w in HIGH_RISK_THREAT_KEYWORDS) else 0
+                is_high_risk = True if severity == 'Critical' or any(w in post_text.lower() or w in kw.lower() for w in HIGH_RISK_THREAT_KEYWORDS) else False
                 days_ago = random.randint(0, 6)
                 ts = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d %H:%M:%S')
                 entities = extract_entities(post_text)
-                db.execute('''
+                db_execute(db, '''
                     INSERT INTO threats (user_id, platform, username, post_text, timestamp,
                         threat_type, matched_keyword, severity, threat_score, location, sentiment, is_high_risk, entities)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ''', (user_id, platform, username, post_text, ts,
                       threat_type, kw, severity, score, location_json, sentiment, is_high_risk, entities))
-    db.commit()
+    db.close()
 
 # ─── AUTH ──────────────────────────────────────────────────────────────────────
 
@@ -320,7 +337,8 @@ def login():
         username = request.form['username']
         password = request.form['password']
         db = get_db()
-        user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+        user = db_fetchone(db, 'SELECT * FROM users WHERE username = %s', (username,))
+        db.close()
         if user and check_password_hash(user['password'], password):
             session['user_id'] = user['id']
             session['username'] = user['username']
@@ -340,12 +358,13 @@ def signup():
         password = request.form['password']
         role = request.form.get('role', 'Analyst')
         db = get_db()
-        if db.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone():
+        if db_fetchone(db, 'SELECT id FROM users WHERE username = %s', (username,)):
+            db.close()
             flash('Username already exists', 'error')
         else:
-            db.execute('INSERT INTO users (name, username, password, role) VALUES (?, ?, ?, ?)',
+            db_execute(db, 'INSERT INTO users (name, username, password, role) VALUES (%s, %s, %s, %s)',
                        (name, username, generate_password_hash(password), role))
-            db.commit()
+            db.close()
             flash('Account created successfully. Please log in.', 'success')
             return redirect(url_for('login'))
     return render_template('signup.html')
@@ -355,29 +374,28 @@ def signup():
 @login_required
 def account_settings():
     db = get_db()
-    user = db.execute('SELECT * FROM users WHERE id = ?', (session['user_id'],)).fetchone()
+    user = db_fetchone(db, 'SELECT * FROM users WHERE id = %s', (session['user_id'],))
     if request.method == 'POST':
         action = request.form.get('action')
         if action == 'change_password':
             current = request.form.get('current_password')
             new_pass = request.form.get('new_password')
             if check_password_hash(user['password'], current):
-                db.execute('UPDATE users SET password = ? WHERE id = ?',
+                db_execute(db, 'UPDATE users SET password = %s WHERE id = %s',
                            (generate_password_hash(new_pass), session['user_id']))
-                db.commit()
                 flash('Password updated successfully!', 'success')
             else:
                 flash('Current password is incorrect.', 'error')
         elif action == 'change_username':
             new_username = request.form.get('new_username')
-            existing = db.execute('SELECT id FROM users WHERE username = ?', (new_username,)).fetchone()
+            existing = db_fetchone(db, 'SELECT id FROM users WHERE username = %s', (new_username,))
             if existing:
                 flash('Username already taken.', 'error')
             else:
-                db.execute('UPDATE users SET username = ? WHERE id = ?', (new_username, session['user_id']))
-                db.commit()
+                db_execute(db, 'UPDATE users SET username = %s WHERE id = %s', (new_username, session['user_id']))
                 session['username'] = new_username
                 flash('Username updated successfully!', 'success')
+    db.close()
     return render_template('account_settings.html', user=user)
 
 # ─── DASHBOARD ─────────────────────────────────────────────────────────────────
@@ -388,27 +406,27 @@ def dashboard():
     db = get_db()
     uid = session['user_id']
 
-    total_posts = db.execute('SELECT COUNT(*) as c FROM posts WHERE user_id=?', (uid,)).fetchone()['c']
-    high_risk_alerts = db.execute('SELECT COUNT(*) as c FROM posts WHERE user_id=? AND is_high_risk=1', (uid,)).fetchone()['c']
+    total_posts = db_fetchone(db, 'SELECT COUNT(*) as c FROM posts WHERE user_id=%s', (uid,))['c']
+    high_risk_alerts = db_fetchone(db, 'SELECT COUNT(*) as c FROM posts WHERE user_id=%s AND is_high_risk=TRUE', (uid,))['c']
 
-    trending_row = db.execute('''SELECT keyword, COUNT(*) as c FROM posts WHERE user_id=?
-        GROUP BY keyword ORDER BY c DESC LIMIT 1''', (uid,)).fetchone()
+    trending_row = db_fetchone(db, '''SELECT keyword, COUNT(*) as c FROM posts WHERE user_id=%s
+        GROUP BY keyword ORDER BY c DESC LIMIT 1''', (uid,))
     trending_keyword = trending_row['keyword'] if trending_row else 'None'
 
-    recent_activity = db.execute('''SELECT platform, keyword, timestamp FROM posts WHERE user_id=?
-        ORDER BY timestamp DESC LIMIT 5''', (uid,)).fetchall()
+    recent_activity = db_fetchall(db, '''SELECT platform, keyword, timestamp FROM posts WHERE user_id=%s
+        ORDER BY timestamp DESC LIMIT 5''', (uid,))
 
-    platform_data = db.execute('SELECT platform, COUNT(*) as c FROM posts WHERE user_id=? GROUP BY platform', (uid,)).fetchall()
-    cat_data = db.execute('SELECT category, COUNT(*) as c FROM posts WHERE user_id=? GROUP BY category', (uid,)).fetchall()
+    platform_data = db_fetchall(db, 'SELECT platform, COUNT(*) as c FROM posts WHERE user_id=%s GROUP BY platform', (uid,))
+    cat_data = db_fetchall(db, 'SELECT category, COUNT(*) as c FROM posts WHERE user_id=%s GROUP BY category', (uid,))
 
-    # Threat severity breakdown
     sev_counts = {}
     for sev in ['Low', 'Medium', 'High', 'Critical']:
-        row = db.execute('SELECT COUNT(*) as c FROM threats WHERE user_id=? AND severity=?', (uid, sev)).fetchone()
+        row = db_fetchone(db, 'SELECT COUNT(*) as c FROM threats WHERE user_id=%s AND severity=%s', (uid, sev))
         sev_counts[sev] = row['c']
 
-    total_threats = db.execute('SELECT COUNT(*) as c FROM threats WHERE user_id=?', (uid,)).fetchone()['c']
-    alert_count = db.execute('SELECT COUNT(*) as c FROM threats WHERE user_id=? AND is_high_risk=1 AND is_reviewed=0', (uid,)).fetchone()['c']
+    total_threats = db_fetchone(db, 'SELECT COUNT(*) as c FROM threats WHERE user_id=%s', (uid,))['c']
+    alert_count = db_fetchone(db, 'SELECT COUNT(*) as c FROM threats WHERE user_id=%s AND is_high_risk=TRUE AND is_reviewed=FALSE', (uid,))['c']
+    db.close()
 
     return render_template('dashboard.html',
         total_posts=total_posts, high_risk_alerts=high_risk_alerts,
@@ -452,14 +470,14 @@ def simulate_crawler(user_id, keywords_list):
             category = 'General Discussion'
             if any(w in post_lower for w in cyber_threat_words): category = 'Cyber Threat'
             elif any(w in post_lower for w in security_alert_words): category = 'Security Alert'
-            is_high_risk = 1 if any(w in post_lower for w in high_risk_words) else 0
+            is_high_risk = True if any(w in post_lower for w in high_risk_words) else False
             score = get_threat_score('High' if is_high_risk else 'Low')
             sentiment = classify_sentiment(post_text)
-            db.execute('''INSERT INTO posts (user_id, platform, username, post_text, timestamp, keyword, category, is_high_risk, threat_score, sentiment)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            db_execute(db, '''INSERT INTO posts (user_id, platform, username, post_text, timestamp, keyword, category, is_high_risk, threat_score, sentiment)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
                 (user_id, platform, username, post_text, datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                  kw, category, is_high_risk, score, sentiment))
-    db.commit()
+    db.close()
 
 @app.route('/watchwords', methods=['GET', 'POST'])
 @login_required
@@ -474,8 +492,8 @@ def watchwords():
         if keywords_list:
             db = get_db()
             for kw in keywords_list:
-                db.execute('INSERT INTO watchwords (user_id, keyword) VALUES (?, ?)', (uid, kw))
-            db.commit()
+                db_execute(db, 'INSERT INTO watchwords (user_id, keyword) VALUES (%s, %s)', (uid, kw))
+            db.close()
             simulate_crawler(uid, keywords_list)
             flash(f'Monitoring started for {len(keywords_list)} keywords!', 'success')
             return redirect(url_for('results'))
@@ -486,15 +504,16 @@ def watchwords():
 @login_required
 def watchword_history():
     db = get_db()
-    words = db.execute('SELECT * FROM watchwords WHERE user_id=? ORDER BY added_at DESC', (session['user_id'],)).fetchall()
+    words = db_fetchall(db, 'SELECT * FROM watchwords WHERE user_id=%s ORDER BY added_at DESC', (session['user_id'],))
+    db.close()
     return render_template('watchword_history.html', words=words)
 
 @app.route('/delete-watchword/<int:wid>')
 @require_role('Analyst')
 def delete_watchword(wid):
     db = get_db()
-    db.execute('DELETE FROM watchwords WHERE id=? AND user_id=?', (wid, session['user_id']))
-    db.commit()
+    db_execute(db, 'DELETE FROM watchwords WHERE id=%s AND user_id=%s', (wid, session['user_id']))
+    db.close()
     flash('Watch word deleted.', 'success')
     return redirect(url_for('watchword_history'))
 
@@ -509,17 +528,18 @@ def results():
     keyword = request.args.get('keyword', '')
     category = request.args.get('category', '')
 
-    query = 'SELECT * FROM posts WHERE user_id=?'
+    query = 'SELECT * FROM posts WHERE user_id=%s'
     params = [uid]
-    if platform: query += ' AND platform=?'; params.append(platform)
-    if keyword: query += ' AND keyword=?'; params.append(keyword)
-    if category: query += ' AND category=?'; params.append(category)
+    if platform: query += ' AND platform=%s'; params.append(platform)
+    if keyword: query += ' AND keyword=%s'; params.append(keyword)
+    if category: query += ' AND category=%s'; params.append(category)
     query += ' ORDER BY timestamp DESC'
 
-    posts = db.execute(query, params).fetchall()
-    platforms = db.execute('SELECT DISTINCT platform FROM posts WHERE user_id=?', (uid,)).fetchall()
-    keywords = db.execute('SELECT DISTINCT keyword FROM posts WHERE user_id=?', (uid,)).fetchall()
-    categories = db.execute('SELECT DISTINCT category FROM posts WHERE user_id=?', (uid,)).fetchall()
+    posts = db_fetchall(db, query, params)
+    platforms = db_fetchall(db, 'SELECT DISTINCT platform FROM posts WHERE user_id=%s', (uid,))
+    keywords = db_fetchall(db, 'SELECT DISTINCT keyword FROM posts WHERE user_id=%s', (uid,))
+    categories = db_fetchall(db, 'SELECT DISTINCT category FROM posts WHERE user_id=%s', (uid,))
+    db.close()
 
     return render_template('results.html', posts=posts,
         platforms=[p['platform'] for p in platforms],
@@ -531,8 +551,8 @@ def results():
 @require_role('Analyst')
 def delete_post(pid):
     db = get_db()
-    db.execute('DELETE FROM posts WHERE id=? AND user_id=?', (pid, session['user_id']))
-    db.commit()
+    db_execute(db, 'DELETE FROM posts WHERE id=%s AND user_id=%s', (pid, session['user_id']))
+    db.close()
     flash('Post deleted.', 'success')
     return redirect(url_for('results'))
 
@@ -540,9 +560,9 @@ def delete_post(pid):
 @require_role('Admin')
 def clear_data():
     db = get_db()
-    db.execute('DELETE FROM posts WHERE user_id=?', (session['user_id'],))
-    db.execute('DELETE FROM threats WHERE user_id=?', (session['user_id'],))
-    db.commit()
+    db_execute(db, 'DELETE FROM posts WHERE user_id=%s', (session['user_id'],))
+    db_execute(db, 'DELETE FROM threats WHERE user_id=%s', (session['user_id'],))
+    db.close()
     flash('All data cleared successfully.', 'success')
     return redirect(url_for('dashboard'))
 
@@ -550,7 +570,8 @@ def clear_data():
 @require_role('Analyst')
 def export_results():
     db = get_db()
-    posts = db.execute('SELECT * FROM posts WHERE user_id=? ORDER BY timestamp DESC', (session['user_id'],)).fetchall()
+    posts = db_fetchall(db, 'SELECT * FROM posts WHERE user_id=%s ORDER BY timestamp DESC', (session['user_id'],))
+    db.close()
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(['Platform', 'Username', 'Post', 'Category', 'Keyword', 'Threat Score', 'Sentiment', 'High Risk', 'Date'])
@@ -570,9 +591,9 @@ def threat_intelligence():
     uid = session['user_id']
 
     # Auto-scan if empty
-    if db.execute('SELECT COUNT(*) as c FROM threats WHERE user_id=?', (uid,)).fetchone()['c'] == 0:
+    if db_fetchone(db, 'SELECT COUNT(*) as c FROM threats WHERE user_id=%s', (uid,))['c'] == 0:
         simulate_threat_scan(uid)
-
+    
     # Filters
     threat_type_filter = request.args.get('threat_type', '')
     platform_filter = request.args.get('platform', '')
@@ -581,43 +602,42 @@ def threat_intelligence():
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
 
-    query = 'SELECT * FROM threats WHERE user_id=?'
+    query = 'SELECT * FROM threats WHERE user_id=%s'
     params = [uid]
-    if threat_type_filter: query += ' AND threat_type=?'; params.append(threat_type_filter)
-    if platform_filter: query += ' AND platform=?'; params.append(platform_filter)
-    if severity_filter: query += ' AND severity=?'; params.append(severity_filter)
-    if search_query: query += ' AND (post_text LIKE ? OR matched_keyword LIKE ?)'; params += [f'%{search_query}%', f'%{search_query}%']
-    if date_from: query += ' AND timestamp >= ?'; params.append(date_from)
-    if date_to: query += ' AND timestamp <= ?'; params.append(date_to + ' 23:59:59')
+    if threat_type_filter: query += ' AND threat_type=%s'; params.append(threat_type_filter)
+    if platform_filter: query += ' AND platform=%s'; params.append(platform_filter)
+    if severity_filter: query += ' AND severity=%s'; params.append(severity_filter)
+    if search_query: query += ' AND (post_text LIKE %s OR matched_keyword LIKE %s)'; params += [f'%{search_query}%', f'%{search_query}%']
+    if date_from: query += ' AND timestamp >= %s'; params.append(date_from)
+    if date_to: query += ' AND timestamp <= %s'; params.append(date_to + ' 23:59:59')
     query += ' ORDER BY timestamp DESC'
 
-    threats = db.execute(query, params).fetchall()
+    threats = db_fetchall(db, query, params)
 
-    # Summary
-    total_threats = db.execute('SELECT COUNT(*) as c FROM threats WHERE user_id=?', (uid,)).fetchone()['c']
-    high_risk_count = db.execute('SELECT COUNT(*) as c FROM threats WHERE user_id=? AND is_high_risk=1', (uid,)).fetchone()['c']
+    total_threats = db_fetchone(db, 'SELECT COUNT(*) as c FROM threats WHERE user_id=%s', (uid,))['c']
+    high_risk_count = db_fetchone(db, 'SELECT COUNT(*) as c FROM threats WHERE user_id=%s AND is_high_risk=TRUE', (uid,))['c']
 
     type_counts = {}
     for tt in THREAT_DICTIONARY.keys():
-        type_counts[tt] = db.execute('SELECT COUNT(*) as c FROM threats WHERE user_id=? AND threat_type=?', (uid, tt)).fetchone()['c']
+        type_counts[tt] = db_fetchone(db, 'SELECT COUNT(*) as c FROM threats WHERE user_id=%s AND threat_type=%s', (uid, tt))['c']
 
     sev_counts = {}
     for sev in ['Low', 'Medium', 'High', 'Critical']:
-        sev_counts[sev] = db.execute('SELECT COUNT(*) as c FROM threats WHERE user_id=? AND severity=?', (uid, sev)).fetchone()['c']
+        sev_counts[sev] = db_fetchone(db, 'SELECT COUNT(*) as c FROM threats WHERE user_id=%s AND severity=%s', (uid, sev))['c']
 
-    platform_data = db.execute('SELECT platform, COUNT(*) as c FROM threats WHERE user_id=? GROUP BY platform', (uid,)).fetchall()
+    platform_data = db_fetchall(db, 'SELECT platform, COUNT(*) as c FROM threats WHERE user_id=%s GROUP BY platform', (uid,))
 
     # Timeline: last 7 days
     timeline_labels = []
     timeline_values = []
     for i in range(6, -1, -1):
         day = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
-        count = db.execute("SELECT COUNT(*) as c FROM threats WHERE user_id=? AND timestamp LIKE ?", (uid, f'{day}%')).fetchone()['c']
+        count = db_fetchone(db, "SELECT COUNT(*) as c FROM threats WHERE user_id=%s AND timestamp LIKE %s", (uid, f'{day}%'))['c']
         timeline_labels.append((datetime.now() - timedelta(days=i)).strftime('%a'))
         timeline_values.append(count)
 
-    # Geo map data
-    all_threats = db.execute('SELECT location, threat_type, post_text FROM threats WHERE user_id=?', (uid,)).fetchall()
+    all_threats = db_fetchall(db, 'SELECT location, threat_type, post_text FROM threats WHERE user_id=%s', (uid,))
+    db.close()
     map_points = []
     for t in all_threats:
         try:
@@ -643,8 +663,8 @@ def threat_intelligence():
 @require_role('Analyst')
 def rescan_threats():
     db = get_db()
-    db.execute('DELETE FROM threats WHERE user_id=?', (session['user_id'],))
-    db.commit()
+    db_execute(db, 'DELETE FROM threats WHERE user_id=%s', (session['user_id'],))
+    db.close()
     simulate_threat_scan(session['user_id'])
     log_action(session['user_id'], session['username'], 'THREAT_SCAN', 'Manual rescan triggered')
     flash('Threat intelligence scan complete!', 'success')
@@ -654,8 +674,8 @@ def rescan_threats():
 @require_role('Analyst')
 def mark_reviewed(tid):
     db = get_db()
-    db.execute('UPDATE threats SET is_reviewed=1 WHERE id=? AND user_id=?', (tid, session['user_id']))
-    db.commit()
+    db_execute(db, 'UPDATE threats SET is_reviewed=TRUE WHERE id=%s AND user_id=%s', (tid, session['user_id']))
+    db.close()
     return redirect(url_for('alert_inbox'))
 
 # ─── ALERT INBOX ───────────────────────────────────────────────────────────────
@@ -666,12 +686,13 @@ def alert_inbox():
     db = get_db()
     uid = session['user_id']
     show_reviewed = request.args.get('show_reviewed', '0')
-    query = 'SELECT * FROM threats WHERE user_id=? AND is_high_risk=1'
+    query = 'SELECT * FROM threats WHERE user_id=%s AND is_high_risk=TRUE'
     if show_reviewed != '1':
-        query += ' AND is_reviewed=0'
+        query += ' AND is_reviewed=FALSE'
     query += ' ORDER BY timestamp DESC'
-    alerts = db.execute(query, (uid,)).fetchall()
-    unread_count = db.execute('SELECT COUNT(*) as c FROM threats WHERE user_id=? AND is_high_risk=1 AND is_reviewed=0', (uid,)).fetchone()['c']
+    alerts = db_fetchall(db, query, (uid,))
+    unread_count = db_fetchone(db, 'SELECT COUNT(*) as c FROM threats WHERE user_id=%s AND is_high_risk=TRUE AND is_reviewed=FALSE', (uid,))['c']
+    db.close()
     return render_template('alert_inbox.html', alerts=alerts, unread_count=unread_count, show_reviewed=show_reviewed)
 
 # ─── EXPORT THREAT INTELLIGENCE ────────────────────────────────────────────────
@@ -680,7 +701,8 @@ def alert_inbox():
 @require_role('Analyst')
 def export_threats_csv():
     db = get_db()
-    threats = db.execute('SELECT * FROM threats WHERE user_id=? ORDER BY timestamp DESC', (session['user_id'],)).fetchall()
+    threats = db_fetchall(db, 'SELECT * FROM threats WHERE user_id=%s ORDER BY timestamp DESC', (session['user_id'],))
+    db.close()
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(['Platform', 'Username', 'Post', 'Threat Type', 'Keyword', 'Severity', 'Score', 'Sentiment', 'Location', 'High Risk', 'Date'])
@@ -701,9 +723,10 @@ def export_threats_pdf():
         return redirect(url_for('threat_intelligence'))
     db = get_db()
     uid = session['user_id']
-    threats = db.execute('SELECT * FROM threats WHERE user_id=? ORDER BY timestamp DESC LIMIT 50', (uid,)).fetchall()
-    total = db.execute('SELECT COUNT(*) as c FROM threats WHERE user_id=?', (uid,)).fetchone()['c']
-    high_risk = db.execute('SELECT COUNT(*) as c FROM threats WHERE user_id=? AND is_high_risk=1', (uid,)).fetchone()['c']
+    threats = db_fetchall(db, 'SELECT * FROM threats WHERE user_id=%s ORDER BY timestamp DESC LIMIT 50', (uid,))
+    total = db_fetchone(db, 'SELECT COUNT(*) as c FROM threats WHERE user_id=%s', (uid,))['c']
+    high_risk = db_fetchone(db, 'SELECT COUNT(*) as c FROM threats WHERE user_id=%s AND is_high_risk=TRUE', (uid,))['c']
+    db.close()
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter)
@@ -739,7 +762,8 @@ def export_threats_excel():
         flash('Excel export requires openpyxl. Run: pip install openpyxl', 'error')
         return redirect(url_for('threat_intelligence'))
     db = get_db()
-    threats = db.execute('SELECT * FROM threats WHERE user_id=? ORDER BY timestamp DESC', (session['user_id'],)).fetchall()
+    threats = db_fetchall(db, 'SELECT * FROM threats WHERE user_id=%s ORDER BY timestamp DESC', (session['user_id'],))
+    db.close()
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = 'Threat Intelligence'
@@ -764,16 +788,15 @@ def export_threats_excel():
 def user_logs():
     db = get_db()
     uid = session['user_id']
-    # Admin can see all logs; others see only their own
     if session.get('role') == 'Admin':
-        logs = db.execute('SELECT * FROM user_logs ORDER BY timestamp DESC LIMIT 500').fetchall()
+        logs = db_fetchall(db, 'SELECT * FROM user_logs ORDER BY timestamp DESC LIMIT 500')
     else:
-        logs = db.execute('SELECT * FROM user_logs WHERE user_id=? ORDER BY timestamp DESC LIMIT 200', (uid,)).fetchall()
+        logs = db_fetchall(db, 'SELECT * FROM user_logs WHERE user_id=%s ORDER BY timestamp DESC LIMIT 200', (uid,))
 
-    # Stats
-    total_logins = db.execute("SELECT COUNT(*) as c FROM user_logs WHERE user_id=? AND action='LOGIN'", (uid,)).fetchone()['c']
-    failed_logins = db.execute("SELECT COUNT(*) as c FROM user_logs WHERE username=? AND action='FAILED_LOGIN'", (session['username'],)).fetchone()['c']
-    total_scans = db.execute("SELECT COUNT(*) as c FROM user_logs WHERE user_id=? AND action='THREAT_SCAN'", (uid,)).fetchone()['c']
+    total_logins = db_fetchone(db, "SELECT COUNT(*) as c FROM user_logs WHERE user_id=%s AND action='LOGIN'", (uid,))['c']
+    failed_logins = db_fetchone(db, "SELECT COUNT(*) as c FROM user_logs WHERE username=%s AND action='FAILED_LOGIN'", (session['username'],))['c']
+    total_scans = db_fetchone(db, "SELECT COUNT(*) as c FROM user_logs WHERE user_id=%s AND action='THREAT_SCAN'", (uid,))['c']
+    db.close()
 
     return render_template('user_logs.html', logs=logs, total_logins=total_logins,
                            failed_logins=failed_logins, total_scans=total_scans)
@@ -792,8 +815,9 @@ def keyword_frequency():
     if 'user_id' not in session:
         return jsonify([])
     db = get_db()
-    rows = db.execute('''SELECT keyword, COUNT(*) as c FROM posts WHERE user_id=?
-        GROUP BY keyword ORDER BY c DESC LIMIT 10''', (session['user_id'],)).fetchall()
+    rows = db_fetchall(db, '''SELECT keyword, COUNT(*) as c FROM posts WHERE user_id=%s
+        GROUP BY keyword ORDER BY c DESC LIMIT 10''', (session['user_id'],))
+    db.close()
     return jsonify([{'keyword': r['keyword'], 'count': r['c']} for r in rows])
 
 
@@ -807,25 +831,25 @@ def admin_panel():
         flash('Access denied. Admins only.', 'error')
         return redirect(url_for('dashboard'))
     db = get_db()
-    # All users with their stats
-    users = db.execute('SELECT * FROM users ORDER BY id').fetchall()
+    users = db_fetchall(db, 'SELECT * FROM users ORDER BY id')
     user_stats = []
     for u in users:
-        posts = db.execute('SELECT COUNT(*) as c FROM posts WHERE user_id=?', (u['id'],)).fetchone()['c']
-        threats = db.execute('SELECT COUNT(*) as c FROM threats WHERE user_id=?', (u['id'],)).fetchone()['c']
-        last_login = db.execute(
-            "SELECT timestamp FROM user_logs WHERE user_id=? AND action='LOGIN' ORDER BY timestamp DESC LIMIT 1",
-            (u['id'],)).fetchone()
+        posts = db_fetchone(db, 'SELECT COUNT(*) as c FROM posts WHERE user_id=%s', (u['id'],))['c']
+        threats = db_fetchone(db, 'SELECT COUNT(*) as c FROM threats WHERE user_id=%s', (u['id'],))['c']
+        last_login = db_fetchone(db,
+            "SELECT timestamp FROM user_logs WHERE user_id=%s AND action='LOGIN' ORDER BY timestamp DESC LIMIT 1",
+            (u['id'],))
         user_stats.append({
             'id': u['id'], 'name': u['name'], 'username': u['username'],
             'role': u['role'], 'posts': posts, 'threats': threats,
             'last_login': last_login['timestamp'] if last_login else 'Never'
         })
     total_users = len(users)
-    total_posts = db.execute('SELECT COUNT(*) as c FROM posts').fetchone()['c']
-    total_threats = db.execute('SELECT COUNT(*) as c FROM threats').fetchone()['c']
-    total_logs = db.execute('SELECT COUNT(*) as c FROM user_logs').fetchone()['c']
-    recent_logs = db.execute('SELECT * FROM user_logs ORDER BY timestamp DESC LIMIT 20').fetchall()
+    total_posts = db_fetchone(db, 'SELECT COUNT(*) as c FROM posts')['c']
+    total_threats = db_fetchone(db, 'SELECT COUNT(*) as c FROM threats')['c']
+    total_logs = db_fetchone(db, 'SELECT COUNT(*) as c FROM user_logs')['c']
+    recent_logs = db_fetchall(db, 'SELECT * FROM user_logs ORDER BY timestamp DESC LIMIT 20')
+    db.close()
     return render_template('admin.html', user_stats=user_stats,
                            total_users=total_users, total_posts=total_posts,
                            total_threats=total_threats, total_logs=total_logs,
@@ -841,9 +865,9 @@ def change_role(uid):
         flash('Invalid role.', 'error')
         return redirect(url_for('admin_panel'))
     db = get_db()
-    db.execute('UPDATE users SET role=? WHERE id=?', (new_role, uid))
-    db.commit()
-    target = db.execute('SELECT username FROM users WHERE id=?', (uid,)).fetchone()
+    db_execute(db, 'UPDATE users SET role=%s WHERE id=%s', (new_role, uid))
+    target = db_fetchone(db, 'SELECT username FROM users WHERE id=%s', (uid,))
+    db.close()
     log_action(session['user_id'], session['username'], 'ROLE_CHANGE',
                f"Changed {target['username']} role to {new_role}")
     flash(f'Role updated to {new_role}.', 'success')
@@ -858,12 +882,12 @@ def delete_user(uid):
         flash("You can't delete your own account.", 'error')
         return redirect(url_for('admin_panel'))
     db = get_db()
-    target = db.execute('SELECT username FROM users WHERE id=?', (uid,)).fetchone()
-    db.execute('DELETE FROM posts WHERE user_id=?', (uid,))
-    db.execute('DELETE FROM threats WHERE user_id=?', (uid,))
-    db.execute('DELETE FROM watchwords WHERE user_id=?', (uid,))
-    db.execute('DELETE FROM users WHERE id=?', (uid,))
-    db.commit()
+    target = db_fetchone(db, 'SELECT username FROM users WHERE id=%s', (uid,))
+    db_execute(db, 'DELETE FROM posts WHERE user_id=%s', (uid,))
+    db_execute(db, 'DELETE FROM threats WHERE user_id=%s', (uid,))
+    db_execute(db, 'DELETE FROM watchwords WHERE user_id=%s', (uid,))
+    db_execute(db, 'DELETE FROM users WHERE id=%s', (uid,))
+    db.close()
     log_action(session['user_id'], session['username'], 'DELETE_USER',
                f"Deleted user: {target['username']}")
     flash(f"User '{target['username']}' deleted.", 'success')
