@@ -8,7 +8,9 @@
             <span style="background:rgba(16,185,129,.15);color:#6ee7b7;padding:.15rem .5rem;border-radius:4px;font-size:.8rem;">{{ session.get('role','Analyst') }}</span>
         </p>
     </div>
+    {% if session.get('role') in ['Admin','Analyst'] %}
     <a href="{{ url_for('watchwords') }}" class="btn-primary" style="text-decoration:none;padding:.65rem 1.2rem;">+ Add Keywords</a>
+    {% endif %}
 </div>
 
 <!-- Main Metric Cards -->
@@ -72,7 +74,7 @@
         {% endfor %}
     </ul>
     {% else %}
-    <p style="color:var(--text-muted);text-align:center;padding:1.5rem 0;">No activity yet. <a href="{{ url_for('watchwords') }}" style="color:var(--primary-color);">Add watch words</a> to start.</p>
+    <p style="color:var(--text-muted);text-align:center;padding:1.5rem 0;">No activity yet.{% if session.get('role') in ['Admin','Analyst'] %} <a href="{{ url_for('watchwords') }}" style="color:var(--primary-color);">Add watch words</a> to start.{% endif %}</p>
     {% endif %}
 </div>
 
