@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+{% block title %}Alert Inbox - Intelligence Platform{% endblock %}
+{% block content %}
+<div style="margin-bottom:2rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+    <div>
+        <h2 style="margin:0;">🚨 Alert Inbox
+            {% if unread_count > 0 %}<span style="font-size:1rem;background:#ef4444;color:white;border-radius:9999px;padding:.2rem .6rem;margin-left:.5rem;vertical-align:middle;">{{unread_count}}</span>{% endif %}
+        </h2>
+        <p style="color:var(--text-muted);margin:.25rem 0 0;">High-risk threats requiring analyst attention</p>
+    </div>
+    <div>
+        {% if show_reviewed == '1' %}
+        <a href="{{ url_for('alert_inbox') }}" class="btn-outline" style="text-decoration:none;padding:.65rem 1.2rem;">Hide Reviewed</a>
+        {% else %}
+        <a href="{{ url_for('alert_inbox', show_reviewed=1) }}" class="btn-outline" style="text-decoration:none;padding:.65rem 1.2rem;">Show All</a>
+        {% endif %}
+    </div>
+</div>
+
+{% if alerts %}
+<div style="display:flex;flex-direction:column;gap:1rem;">
+    {% for alert in alerts %}
+    <div style="background:var(--card-bg);border-radius:10px;border:1px solid var(--border-color);border-left:4px solid {% if alert.severity=='Critical' %}#ef4444{% elif alert.severity=='High' %}#f97316{% else %}#f59e0b{% endif %};padding:1.2rem;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;">
+            <div style="flex:1;">
+                <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.5rem;align-items:center;">
+                    <span style="font-weight:700;color:{% if alert.platform=='Twitter' %}#10b981{% elif alert.platform=='Facebook' %}#3b82f6{% elif alert.platform=='Instagram' %}#8b5cf6{% else %}#06b6d4{% endif %};">{{alert.platform}}</span>
+                    <span style="color:var(--primary-color);">@{{alert.username}}</span>
+                    <span style="background:rgba(239,68,68,.15);color:#fca5a5;padding:.15rem .5rem;border-radius:9999px;font-size:.72rem;font-weight:700;border:1px solid rgba(239,68,68,.4);animation:blink 1.5s ease-in-out infinite;">🔴 HIGH RISK</span>
+                    <span style="background:rgba(239,68,68,.15);color:{% if alert.severity=='Critical' %}#fca5a5{% else %}#fdba74{% endif %};padding:.15rem .5rem;border-radius:4px;font-size:.75rem;border:1px solid rgba(239,68,68,.3);">{{alert.severity}}</span>
+                    {% if alert.is_reviewed %}<span style="background:rgba(16,185,129,.15);color:#6ee7b7;padding:.15rem .5rem;border-radius:4px;font-size:.75rem;">✓ Reviewed</span>{% endif %}
+                </div>
+                <p style="margin:0;color:var(--text-main);">{{alert.post_text}}</p>
+                <div style="margin-top:.5rem;display:flex;gap:1rem;font-size:.82rem;color:var(--text-muted);">
+                    <span>🏷 {{alert.threat_type}}</span>
+                    <span>🔑 {{alert.matched_keyword}}</span>
+                    <span>📊 Score: {{alert.threat_score}}/10</span>
+                    <span>🕒 {{alert.timestamp[:16]}}</span>
+                </div>
+            </div>
+            {% if not alert.is_reviewed and session.get('role') in ['Admin','Analyst'] %}
+            <a href="{{ url_for('mark_reviewed', tid=alert.id) }}" style="text-decoration:none;padding:.5rem 1rem;background:rgba(16,185,129,.15);color:#6ee7b7;border:1px solid rgba(16,185,129,.3);border-radius:6px;white-space:nowrap;font-size:.85rem;">✓ Mark Reviewed</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div style="background:var(--card-bg);border-radius:12px;border:1px solid var(--border-color);padding:3rem;text-align:center;">
+    <div style="font-size:3rem;">✅</div>
+    <h3>No unreviewed alerts</h3>
+    <p style="color:var(--text-muted);">All high-risk alerts have been reviewed or no high-risk threats detected yet.</p>
+    <a href="{{ url_for('threat_intelligence') }}" class="btn-primary" style="text-decoration:none;display:inline-block;padding:.75rem 1.5rem;margin-top:1rem;">Go to Threat Intelligence</a>
+</div>
+{% endif %}
+{% endblock %}

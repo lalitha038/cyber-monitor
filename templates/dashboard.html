@@ -1,0 +1,109 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard - Intelligence Platform{% endblock %}
+{% block content %}
+<div style="margin-bottom:2rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+    <div>
+        <h2 style="margin:0;">📊 Dashboard Overview</h2>
+        <p style="color:var(--text-muted);margin:.25rem 0 0;">Welcome back, <strong>{{ session.get('username') }}</strong> &nbsp;
+            <span style="background:rgba(16,185,129,.15);color:#6ee7b7;padding:.15rem .5rem;border-radius:4px;font-size:.8rem;">{{ session.get('role','Analyst') }}</span>
+        </p>
+    </div>
+    <a href="{{ url_for('watchwords') }}" class="btn-primary" style="text-decoration:none;padding:.65rem 1.2rem;">+ Add Keywords</a>
+</div>
+
+<!-- Main Metric Cards -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:1.5rem;">
+    <div style="background:var(--card-bg);padding:1.3rem;border-radius:12px;border-left:4px solid var(--primary-color);box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <p style="margin:0;font-size:.8rem;color:var(--text-muted);text-transform:uppercase;">Posts Collected</p>
+        <p style="font-size:2rem;font-weight:700;margin:.4rem 0 0;color:var(--primary-color);">{{ total_posts }}</p>
+    </div>
+    <div style="background:var(--card-bg);padding:1.3rem;border-radius:12px;border-left:4px solid #ef4444;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <p style="margin:0;font-size:.8rem;color:var(--text-muted);text-transform:uppercase;">High Risk Posts</p>
+        <p style="font-size:2rem;font-weight:700;margin:.4rem 0 0;color:#ef4444;">{{ high_risk_alerts }}</p>
+    </div>
+    <div style="background:var(--card-bg);padding:1.3rem;border-radius:12px;border-left:4px solid #f59e0b;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <p style="margin:0;font-size:.8rem;color:var(--text-muted);text-transform:uppercase;">Trending Keyword</p>
+        <p style="font-size:1.4rem;font-weight:700;margin:.4rem 0 0;color:#fcd34d;">{{ trending_keyword }}</p>
+    </div>
+    <div style="background:var(--card-bg);padding:1.3rem;border-radius:12px;border-left:4px solid #8b5cf6;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <p style="margin:0;font-size:.8rem;color:var(--text-muted);text-transform:uppercase;">Total Threats</p>
+        <p style="font-size:2rem;font-weight:700;margin:.4rem 0 0;color:#8b5cf6;">{{ total_threats }}</p>
+        <a href="{{ url_for('threat_intelligence') }}" style="font-size:.75rem;color:var(--text-muted);text-decoration:none;">View →</a>
+    </div>
+</div>
+
+<!-- Severity Summary -->
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;margin-bottom:2rem;">
+    {% set sev_colors = {'Low':'#10b981','Medium':'#f59e0b','High':'#f97316','Critical':'#ef4444'} %}
+    {% for sev in ['Low','Medium','High','Critical'] %}
+    <div style="background:var(--card-bg);padding:.9rem 1rem;border-radius:10px;border-top:3px solid {{sev_colors[sev]}};text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <p style="margin:0;font-size:.75rem;color:var(--text-muted);">{{sev}}</p>
+        <p style="margin:.25rem 0 0;font-size:1.5rem;font-weight:700;color:{{sev_colors[sev]}};">{{sev_counts.get(sev,0)}}</p>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Charts -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(350px,1fr));gap:1.5rem;margin-bottom:2rem;">
+    <div style="background:var(--card-bg);padding:1.4rem;border-radius:12px;border:1px solid var(--border-color);box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <h3 style="margin-top:0;">Posts by Platform</h3>
+        <div style="position:relative;height:260px;"><canvas id="platformChart"></canvas></div>
+    </div>
+    <div style="background:var(--card-bg);padding:1.4rem;border-radius:12px;border:1px solid var(--border-color);box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <h3 style="margin-top:0;">Category Distribution</h3>
+        <div style="position:relative;height:260px;"><canvas id="categoryChart"></canvas></div>
+    </div>
+    <div style="background:var(--card-bg);padding:1.4rem;border-radius:12px;border:1px solid var(--border-color);box-shadow:0 2px 8px rgba(0,0,0,.3);">
+        <h3 style="margin-top:0;">🔑 Keyword Frequency</h3>
+        <div style="position:relative;height:260px;"><canvas id="kwChart"></canvas></div>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div style="background:var(--card-bg);padding:1.4rem;border-radius:12px;border:1px solid var(--border-color);box-shadow:0 2px 8px rgba(0,0,0,.3);">
+    <h3 style="margin-top:0;">Recent Activity</h3>
+    {% if recent_activity %}
+    <ul style="list-style:none;padding:0;margin:0;">
+        {% for act in recent_activity %}
+        <li style="padding:.85rem 0;border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
+            <span><strong style="color:var(--text-main);">{{ act.platform }}</strong> post for keyword '<span style="color:var(--primary-color);">{{ act.keyword }}</span>'</span>
+            <span style="color:var(--text-muted);font-size:.85rem;">{{ act.timestamp }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p style="color:var(--text-muted);text-align:center;padding:1.5rem 0;">No activity yet. <a href="{{ url_for('watchwords') }}" style="color:var(--primary-color);">Add watch words</a> to start.</p>
+    {% endif %}
+</div>
+
+<script>
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.borderColor = '#1e293b';
+const pColors = ['#10b981','#3b82f6','#8b5cf6','#06b6d4'];
+const cColors = ['#ef4444','#f59e0b','#10b981','#8b5cf6'];
+const platL = {{ platform_labels|tojson }}, platC = {{ platform_counts|tojson }};
+const catL = {{ category_labels|tojson }}, catC = {{ category_counts|tojson }};
+
+if (platL.length) new Chart(document.getElementById('platformChart'), {
+    type:'bar', data:{ labels:platL, datasets:[{ label:'Posts', data:platC, backgroundColor:pColors.slice(0,platL.length), borderRadius:4 }]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, grid:{ color:'#1e293b' } }, x:{ grid:{ display:false } } } }
+});
+
+if (catL.length) new Chart(document.getElementById('categoryChart'), {
+    type:'doughnut', data:{ labels:catL, datasets:[{ data:catC, backgroundColor:cColors.slice(0,catL.length), borderColor:'#111827', borderWidth:2 }]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'right' } }, cutout:'65%' }
+});
+
+// Keyword Frequency Chart — loaded via API
+fetch('/api/keyword-frequency').then(r => r.json()).then(data => {
+    if (!data.length) return;
+    new Chart(document.getElementById('kwChart'), {
+        type: 'bar',
+        data: { labels: data.map(d => d.keyword), datasets: [{ label: 'Posts', data: data.map(d => d.count), backgroundColor: '#10b981', borderRadius: 4 }]},
+        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { x: { beginAtZero: true, grid: { color: '#1e293b' } }, y: { grid: { display: false } } } }
+    });
+});
+</script>
+{% endblock %}

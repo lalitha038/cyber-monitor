@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+
+{% block title %}Watch Words - Intelligence Platform{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 600px; margin: 0 auto; padding: 2rem; background: var(--card-bg); border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+        <h2 style="margin:0;">Add Watch Words</h2>
+        {% set role_colors = {'Admin':'#ef4444','Analyst':'#10b981','Viewer':'#94a3b8'} %}
+        <span style="padding:.25rem .7rem;border-radius:6px;font-size:.8rem;font-weight:600;background:rgba(0,0,0,.2);color:{{ role_colors.get(session.get('role','Viewer'),'#94a3b8') }};border:1px solid {{ role_colors.get(session.get('role','Viewer'),'#94a3b8') }}44;">
+            {{ session.get('role','Viewer') }}
+        </span>
+    </div>
+    <p style="color: var(--text-muted); margin-bottom: 2rem;">Enter keywords to start monitoring social media streams. Separate multiple keywords with commas.</p>
+
+    {% if session.get('role') == 'Viewer' %}
+    <div style="background:rgba(148,163,184,.1);border:1px solid rgba(148,163,184,.3);border-radius:8px;padding:1rem 1.2rem;color:#94a3b8;font-size:.9rem;">
+        🔒 <strong>View-only access.</strong> Your role (<em>Viewer</em>) does not allow adding watch words. Contact an Admin or Analyst to add keywords.
+    </div>
+    {% else %}
+    <form method="POST" action="{{ url_for('watchwords') }}">
+        <div class="form-group">
+            <label for="keywords">Keywords (e.g. ransomware, cyber attack, malware)</label>
+            <input type="text" id="keywords" name="keywords" required placeholder="ransomware, cyber attack">
+        </div>
+        <button type="submit" class="btn-primary w-100">🔍 Start Monitoring</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}
